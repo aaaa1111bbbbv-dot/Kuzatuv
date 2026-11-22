@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0c0b">
+<title>Kuzatuv</title>
+<style>
+:root{color-scheme:dark;--bg:#0a0c0b;--pn:#121615;--ln:#26302d;--tx:#e6ede9;--mu:#8a9a93;--ok:#5dff9d;--al:#ff4d4d;--wn:#ffc14d}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+body{padding:calc(12px + env(safe-area-inset-top,0px)) 12px calc(24px + env(safe-area-inset-bottom,0px));max-width:760px;margin:auto}
+h1{font:700 15px ui-monospace,Consolas,monospace;letter-spacing:.14em;text-transform:uppercase;margin:0;display:flex;align-items:center;gap:10px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--mu)}.on .dot{background:var(--ok);box-shadow:0 0 10px var(--ok);animation:p 1.4s infinite}.alarm .dot{background:var(--al);box-shadow:0 0 12px var(--al)}
+@keyframes p{50%{opacity:.35}}
+#state{font:12px ui-monospace,Consolas,monospace;color:var(--mu);margin:4px 0 12px}
+.card{background:var(--pn);border:1px solid var(--ln);border-radius:14px;padding:12px;margin-bottom:12px}
+.card h2{font:600 11px ui-monospace,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--mu);margin:0 0 10px}
+.row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
+input,select,button{font:inherit;color:var(--tx);background:#0b0f0e;border:1px solid var(--ln);border-radius:10px;padding:9px 11px;min-width:0;outline:none}
+input:focus,select:focus{border-color:var(--ok)}input[type=range]{padding:0;flex:1}input[type=checkbox]{width:18px;height:18px;padding:0}
+.f{flex:1 1 120px}button{cursor:pointer}button:active{filter:brightness(1.4)}
+#go{width:100%;padding:14px;font:700 15px system-ui;border:0;border-radius:12px;background:var(--ok);color:#03210f;margin-bottom:12px}
+#go.stop{background:var(--al);color:#fff}
+.cam{display:grid;grid-template-columns:90px 110px 1fr 34px;gap:6px;margin-bottom:6px}.cam input,.cam select{padding:8px}
+.tile{position:relative;background:#000;border:1px solid var(--ln);border-radius:12px;overflow:hidden;margin-bottom:10px;aspect-ratio:16/9}
+.tile video,.tile img,.tile canvas.v{width:100%;height:100%;object-fit:cover;display:block}
+.tile .tag{position:absolute;left:8px;top:8px;font:11px ui-monospace,Consolas,monospace;background:#000b;padding:3px 8px;border-radius:6px}
+.tile.hit{border-color:var(--al);box-shadow:0 0 0 2px var(--al)}
+#log{font:12px/1.5 ui-monospace,Consolas,monospace;max-height:220px;overflow:auto;color:var(--mu)}#log b{color:var(--tx);font-weight:600}
+#log .e{color:var(--al)}#log .w{color:var(--wn)}small{color:var(--mu)}
+</style>
+</head>
+<body>
+<h1 id="hd"><span class="dot"></span>Kuzatuv</h1>
+<div id="state">To'xtatilgan</div>
+<button id="go" type="button">▶ Kuzatuvni boshlash</button>
+<div id="tiles"></div>
+
+<div class="card"><h2>Telegram</h2>
+ <div class="row"><input id="tok" class="f" type="password" placeholder="Bot token" autocomplete="off"><input id="chat" style="width:120px" placeholder="Chat ID" inputmode="numeric"></div>
+ <div class="row"><button id="test" type="button">Sinash</button><span id="tgm"><small></small></span></div>
+</div>
+
+<div class="card"><h2>Jadval va sezgirlik</h2>
+ <div class="row"><label><input id="always" type="checkbox"> Doim</label><input id="t1" type="time" value="22:00"><span>–</span><input id="t2" type="time" value="06:00"></div>
+ <div class="row"><span style="width:84px">Sezgirlik</span><input id="sens" type="range" min="1" max="10" value="6"><b id="sv">6</b></div>
+ <div class="row"><span style="width:84px">Pauza</span><input id="cool" type="number" min="5" value="30" style="width:80px"><small>soniya (signallar orasida)</small></div>
+</div>
+
+<div class="card"><h2>Kameralar</h2><div id="cams"></div>
+ <div class="row"><button id="add" type="button">+ Kamera qo'shish</button></div>
+ <small><b>Shu qurilma</b> — telefon/kompyuter kamerasi. <b>IP</b> — rasm (snapshot) manzili, masalan <code>http://192.168.1.12/snapshot.jpg</code>; kamera boshqa saytdan o'qishga (CORS) ruxsat bersagina harakat sezilaydi, aks holda faqat ko'rinadi. RTSP bu yerda ishlamaydi.</small>
+</div>
+
+<div class="card"><h2>Jurnal</h2><div id="log"></div></div>
+<small>Signal faqat shu sahifa ochiq va ekran yoniq turganda ishlaydi. Doimiy ishlash uchun kompyuterdagi Python versiyasidan foydalaning.</small>
+
+<script>
+const $=id=>document.getElementById(id),sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const LS={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+const W=160,H=90;
+let cams=LS.get("cams",[{n:"Telefon",t:"dev",u:""}]),run=false,wake=null,lastIn=null,workers=[];
+
+/* ---------- jurnal ---------- */
+function log(t,c){const d=new Date(),s=d.toTimeString().slice(0,8),e=document.createElement("div");if(c)e.className=c;e.innerHTML="<b>"+s+"</b> "+t.replace(/</g,"&lt;");$("log").prepend(e);while($("log").children.length>150)$("log").lastChild.remove()}
+
+/* ---------- sozlamalar ---------- */
+for(const [id,k] of [["tok","tok"],["chat","chat"],["t1","t1"],["t2","t2"],["sens","sens"],["cool","cool"]]){const el=$(id),v=LS.get(k,null);if(v!=null)el.value=v;el.addEventListener("input",()=>{LS.set(k,el.value.trim?el.value.trim():el.value);if(id==="sens")$("sv").textContent=el.value})}
+$("always").checked=LS.get("always",false);$("always").onchange=()=>LS.set("always",$("always").checked);$("sv").textContent=$("sens").value;
+function drawCams(){const box=$("cams");box.innerHTML="";cams.forEach((c,i)=>{const r=document.createElement("div");r.className="cam";
+ r.innerHTML='<input placeholder="Nom"><select><option value="dev">Shu qurilma</option><option value="ip">IP rasm</option></select><input placeholder="http://IP/snapshot.jpg"><button type="button">✕</button>';
+ const [n,t,u,x]=r.children;n.value=c.n;t.value=c.t;u.value=c.u;u.style.visibility=c.t==="ip"?"visible":"hidden";
+ const sv=()=>{LS.set("cams",cams)};n.oninput=()=>{c.n=n.value;sv()};u.oninput=()=>{c.u=u.value.trim();sv()};t.onchange=()=>{c.t=t.value;u.style.visibility=c.t==="ip"?"visible":"hidden";sv()};
+ x.onclick=()=>{if(run)return;cams.splice(i,1);sv();drawCams()};box.append(r)})}
+$("add").onclick=()=>{if(run||cams.length>=6)return;cams.push({n:"Kamera "+(cams.length+1),t:"ip",u:""});LS.set("cams",cams);drawCams()};drawCams();
+
+/* ---------- Telegram ---------- */
+const tg=t=>{$("tgm").firstChild.textContent=t};
+async function tgCall(m,body){const tok=$("tok").value.replace(/\s+/g,"");if(!tok)throw new Error("Bot tokenini kiriting");
+ let r;try{r=await fetch("https://api.telegram.org/bot"+tok+"/"+m,{method:"POST",body})}catch(e){throw new Error("Telegramga ulanib bo'lmadi")}
+ const j=await r.json().catch(()=>({}));if(!j.ok)throw new Error(j.description||"Xato "+r.status);return j.result}
+const form=o=>{const f=new FormData();for(const k in o)f.append(k,o[k]);return f};
+const sendText=t=>tgCall("sendMessage",form({chat_id:$("chat").value.trim(),text:t}));
+const sendPhoto=(blob,cap)=>tgCall("sendPhoto",form({chat_id:$("chat").value.trim(),caption:cap,photo:new File([blob],"alert.jpg",{type:"image/jpeg"})}));
+$("test").onclick=async()=>{try{tg("Tekshirilmoqda...");const me=await tgCall("getMe");if(!$("chat").value.trim()){const u=await tgCall("getUpdates",form({limit:20})),m=u.map(x=>x.message).filter(Boolean).pop();
+  if(!m){tg("Botga /start yozing, keyin qayta bosing");return}$("chat").value=m.chat.id;LS.set("chat",String(m.chat.id))}
+ await sendText("✅ Kuzatuv ulandi (@"+me.username+")");tg("Yuborildi ✓")}catch(e){tg("Xato: "+e.message)}};
+
+/* ---------- jadval ---------- */
+const mins=s=>{const [h,m]=s.split(":");return +h*60+ +m};
+function inWindow(){if($("always").checked)return true;const d=new Date(),n=d.getHours()*60+d.getMinutes(),a=mins($("t1").value||"00:00"),b=mins($("t2").value||"00:00");
+ return a===b||(a<b?n>=a&&n<b:n>=a||n<b)}
+
+/* ---------- kamera ishchisi ---------- */
+class Worker{
+ constructor(c,i){this.c=c;this.i=i;this.prev=null;this.n=0;this.last=0;this.st="ulanmoqda";this.hit=0;this.stop=false;
+  this.el=document.createElement("div");this.el.className="tile";this.cv=document.createElement("canvas");this.cv.className="v";this.cv.width=640;this.cv.height=360;
+  this.tag=document.createElement("div");this.tag.className="tag";this.el.append(this.cv,this.tag);$("tiles").append(this.el);
+  this.sm=document.createElement("canvas");this.sm.width=W;this.sm.height=H;this.sx=this.sm.getContext("2d",{willReadFrequently:true});this.cx=this.cv.getContext("2d")}
+ async open(){if(this.c.t==="dev"){try{if(!navigator.mediaDevices||!window.isSecureContext)throw Object.assign(new Error("Sahifa xavfsiz (HTTPS/file) emas, shuning uchun brauzer kamerani bermaydi. Manzil: "+location.protocol+"//"),{name:"XAVFSIZ_EMAS"});this.v=document.createElement("video");this.v.muted=true;this.v.playsInline=true;this.v.setAttribute("playsinline","");this.v.style.cssText="position:absolute;width:2px;height:2px;opacity:.01;pointer-events:none";this.el.append(this.v);
+   this.v.srcObject=this.ms=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1280}},audio:false});await this.v.play();this.st="tayyor"}catch(e){this.st="kamera xatosi: "+(e.name||"");log(this.c.n+": "+(e.name||"")+" — "+e.message,"e")}}
+  else if(!/^https?:\/\//i.test(this.c.u)){this.st="manzil noto'g'ri";log(this.c.n+": snapshot manzilini kiriting","e")}else this.st="tayyor"}
+ async frame(){if(this.c.t==="dev"){if(!this.v||this.v.readyState<2)return null;return this.v}
+  try{const r=await fetch(this.c.u+(this.c.u.includes("?")?"&":"?")+"_="+Date.now(),{cache:"no-store"});if(!r.ok)throw new Error("HTTP "+r.status);this.view=0;return await createImageBitmap(await r.blob())}
+  catch(e){if(!this.view){this.view=1;this.img=this.img||Object.assign(new Image(),{});this.st="faqat ko'rish (CORS yo'q)";log(this.c.n+": harakatni o'qib bo'lmadi — kamera CORS bermaydi yoki manzil xato ("+e.message+")","w")}
+   this.img.src=this.c.u+(this.c.u.includes("?")?"&":"?")+"_="+Date.now();return this.img.complete&&this.img.naturalWidth?this.img:null}}
+ async tick(armed){const f=await this.frame();if(!f){this.nf=(this.nf||0)+1;this.tag.textContent=this.c.n+" · "+(this.c.t==="dev"&&this.st==="tayyor"?"kadr kutilmoqda...":this.st);if(this.nf===20)log(this.c.n+": kamera 5 soniyadan beri kadr bermayapti (boshqa ilova kamerani band qilgan bo'lishi mumkin)","w");return}this.nf=0;this.cx.drawImage(f,0,0,640,360);
+  if(this.view){this.tag.textContent=this.c.n+" · "+this.st;return}
+  if(!armed){this.prev=null;this.n=0;this.tag.textContent=this.c.n+" · kutmoqda (jadval)";this.el.classList.remove("hit");return}
+  this.sx.drawImage(f,0,0,W,H);const d=this.sx.getImageData(0,0,W,H).data,g=new Float32Array(W*H);for(let p=0;p<W*H;p++)g[p]=d[p*4]*.3+d[p*4+1]*.59+d[p*4+2]*.11;
+  if(!this.prev){this.prev=g;this.warm=8;return}
+  const thr=42-$("sens").value*3,need=W*H*(.016-$("sens").value*.0012);let cnt=0,x0=W,y0=H,x1=0,y1=0;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const k=y*W+x;if(Math.abs(g[k]-this.prev[k])>thr){cnt++;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}this.prev[k]=this.prev[k]*.85+g[k]*.15}
+  if(this.warm>0){this.warm--;return}
+  if(cnt>W*H*.6){this.n=0;return}                                   // chiroq o'zgardi
+  this.n=cnt>need?this.n+1:0;this.hit=this.n>0;this.el.classList.toggle("hit",this.n>0);this.st="kuzatmoqda";this.tag.textContent=this.c.n+" · kuzatmoqda";
+  const cool=Math.max(5,+$("cool").value||30)*1000;
+  if(this.n>=3&&Date.now()-this.last>cool){this.n=0;this.last=Date.now();this.alert([x0,y0,x1,y1])}}
+ alert(b){const k=640/W,cx=this.cx;cx.strokeStyle="#ff4d4d";cx.lineWidth=3;cx.strokeRect(b[0]*k,b[1]*k*1,(b[2]-b[0])*k,(b[3]-b[1])*k*1);
+  cx.fillStyle="#000b";cx.fillRect(0,0,330,26);cx.fillStyle="#ffc14d";cx.font="16px monospace";const ts=new Date().toLocaleString("sv");cx.fillText(this.c.n+"  "+ts,8,19);
+  document.body.classList.add("alarm");setTimeout(()=>document.body.classList.remove("alarm"),4000);log("🚨 "+this.c.n+": harakat!","e");
+  this.cv.toBlob(async bl=>{try{await sendPhoto(bl,"🚨 "+this.c.n+": ruxsatsiz harakat\n🕒 "+ts);log("Rasm botga yuborildi")}catch(e){log("Yuborib bo'lmadi: "+e.message,"e")}},"image/jpeg",.85)}
+ close(){this.stop=true;this.ms&&this.ms.getTracks().forEach(t=>t.stop());this.el.remove()}
+}
+
+/* ---------- boshqaruv ---------- */
+async function start(){if(!cams.length)return;run=true;$("go").textContent="■ To'xtatish";$("go").className="stop";$("hd").className="on";
+ try{wake=await navigator.wakeLock.request("screen")}catch(e){}
+ workers=cams.map((c,i)=>new Worker(c,i));for(const w of workers)await w.open();
+ log("Kuzatuv boshlandi ("+workers.length+" kamera)");if($("chat").value.trim()&&$("tok").value.trim())sendText("🟢 Kuzatuv boshlandi: "+cams.map(c=>c.n).join(", ")).catch(()=>{});
+ loop()}
+async function loop(){while(run){const armed=inWindow();
+  if(armed!==lastIn){lastIn=armed;log(armed?"Jadval boshlandi — kuzatuv FAOL":"Jadval tugadi — kuzatuv kutmoqda");$("state").textContent=armed?"FAOL · "+new Date().toLocaleTimeString("sv").slice(0,5)+" dan beri":"Jadvaldan tashqari, kutmoqda"}
+  await Promise.all(workers.map(w=>w.tick(armed).catch(()=>{})));await sleep(250)}}
+function stop(){run=false;lastIn=null;workers.forEach(w=>w.close());workers=[];wake&&wake.release().catch(()=>{});$("go").textContent="▶ Kuzatuvni boshlash";$("go").className="";$("hd").className="";$("state").textContent="To'xtatilgan";log("Kuzatuv to'xtatildi")}
+$("go").onclick=()=>run?stop():start();
+document.addEventListener("visibilitychange",async()=>{if(run&&!document.hidden){try{wake=await navigator.wakeLock.request("screen")}catch(e){}}});
+addEventListener("error",e=>log("Xato: "+e.message,"e"));
+</script>
+</body>
+</html>
